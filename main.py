@@ -177,6 +177,14 @@ class FallTemplateBot2026(ForecastBot):
             To be a great assistant, you generate a concise but detailed rundown of the most relevant news, including if the question would resolve Yes or No based on current information.
             You do not produce forecasts yourself.
 
+            Organize your rundown under these headings:
+            1. Current status: where things stand today against the resolution criteria. Give the date of each fact you cite.
+            2. Base rates: how often events of this kind have happened in comparable past situations. Name the reference class and give counts or frequencies where you can find them.
+            3. Precedents: the closest similar past cases and how they turned out.
+            4. Scheduled events: dated decisions, votes, releases, deadlines or data publications before the question closes that could settle it.
+            5. Expectations: what experts, markets or official forecasts currently expect, if any exist.
+            Say plainly when you could not find information for a heading rather than guessing.
+
             Question:
             {question.question_text}
 
@@ -218,10 +226,12 @@ class FallTemplateBot2026(ForecastBot):
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The status quo outcome if nothing changed.
-            (c) A brief description of a scenario that results in a No outcome.
-            (d) A brief description of a scenario that results in a Yes outcome.
+            (c) The reference class this question belongs to and its base rate: how often similar events have happened over a similar time window. State the number you are anchoring on, and say so if you have to estimate it.
+            (d) A brief description of a scenario that results in a No outcome.
+            (e) A brief description of a scenario that results in a Yes outcome.
+            (f) How far the specific evidence justifies moving away from the base rate, and in which direction.
 
-            You write your rationale remembering that good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time.
+            You write your rationale remembering that good forecasters start from the base rate, adjust only as far as the evidence supports, and put extra weight on the status quo outcome since the world changes slowly most of the time.
             {self._get_conditional_disclaimer_if_necessary(question)}
 
             The last thing you write is your final answer as: "Probability: ZZ%", 0-100
@@ -288,7 +298,8 @@ class FallTemplateBot2026(ForecastBot):
             Before answering you write:
             (a) The time left until the outcome to the question is known.
             (b) The status quo outcome if nothing changed.
-            (c) A description of a scenario that results in an unexpected outcome.
+            (c) The base rate: how often each kind of option has come out on top in comparable past situations. Say so if you have to estimate it.
+            (d) A description of a scenario that results in an unexpected outcome.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
             You write your rationale remembering that (1) good forecasters put extra weight on the status quo outcome since the world changes slowly most of the time, and (2) good forecasters leave some moderate probability on most options to account for unexpected outcomes.
@@ -375,9 +386,10 @@ class FallTemplateBot2026(ForecastBot):
             (a) The time left until the outcome to the question is known.
             (b) The outcome if nothing changed.
             (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
-            (e) A brief description of an unexpected scenario that results in a low outcome.
-            (f) A brief description of an unexpected scenario that results in a high outcome.
+            (d) The historical record: what the outcome has been in comparable past periods or cases, and how much it typically varies over a window this long.
+            (e) The expectations of experts and markets.
+            (f) A brief description of an unexpected scenario that results in a low outcome.
+            (g) A brief description of an unexpected scenario that results in a high outcome.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
@@ -470,9 +482,10 @@ class FallTemplateBot2026(ForecastBot):
             (a) The time left until the outcome to the question is known.
             (b) The outcome if nothing changed.
             (c) The outcome if the current trend continued.
-            (d) The expectations of experts and markets.
-            (e) A brief description of an unexpected scenario that results in a low outcome.
-            (f) A brief description of an unexpected scenario that results in a high outcome.
+            (d) The historical record: what the outcome has been in comparable past periods or cases, and how much it typically varies over a window this long.
+            (e) The expectations of experts and markets.
+            (f) A brief description of an unexpected scenario that results in a low outcome.
+            (g) A brief description of an unexpected scenario that results in a high outcome.
 
             {self._get_conditional_disclaimer_if_necessary(question)}
             You remind yourself that good forecasters are humble and set wide 90/10 confidence intervals to account for unknown unknowns.
@@ -683,6 +696,30 @@ class FallTemplateBot2026(ForecastBot):
         )
 
 
+def pick_test_questions(
+    questions: list[MetaculusQuestion], max_questions: int
+) -> list[MetaculusQuestion]:
+    """
+    Trim the test-area question list so a test run stays cheap. Takes one
+    question of each type before taking a second of any type, so a small run
+    still exercises binary, numeric, multiple choice, etc. A limit of 0 or
+    less keeps every question.
+    """
+    if max_questions <= 0 or len(questions) <= max_questions:
+        return list(questions)
+
+    by_type: dict[type, list[MetaculusQuestion]] = {}
+    for question in questions:
+        by_type.setdefault(type(question), []).append(question)
+
+    picked: list[MetaculusQuestion] = []
+    while len(picked) < max_questions:
+        for group in by_type.values():
+            if group and len(picked) < max_questions:
+                picked.append(group.pop(0))
+    return picked
+
+
 if __name__ == "__main__":
     logging.basicConfig(
         level=logging.INFO,
@@ -696,6 +733,16 @@ if __name__ == "__main__":
         choices=["tournament", "metaculus_cup", "test_questions"],
         default="tournament",
         help="What to forecast on (default: tournament)",
+    )
+    parser.add_argument(
+        "--max-questions",
+        type=int,
+        default=3,
+        help=(
+            "test_questions mode only: forecast on at most this many questions, "
+            "picking different question types first, to keep test runs cheap "
+            "(default: 3; 0 means all of them)"
+        ),
     )
     args = parser.parse_args()
     run_mode: Literal["tournament", "metaculus_cup", "test_questions"] = args.mode
@@ -775,10 +822,12 @@ if __name__ == "__main__":
         # the recommended target for smoke-testing your bot.
         # https://www.metaculus.com/tournament/bot-testing-area/
         template_bot.skip_previously_forecasted_questions = False
+        test_questions = pick_test_questions(
+            client.get_all_open_questions_from_tournament("bot-testing-area"),
+            args.max_questions,
+        )
         forecast_reports = asyncio.run(
-            template_bot.forecast_on_tournament(
-                "bot-testing-area", return_exceptions=True
-            )
+            template_bot.forecast_questions(test_questions, return_exceptions=True)
         )
 
     template_bot.log_report_summary(forecast_reports)
