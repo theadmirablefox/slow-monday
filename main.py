@@ -544,7 +544,13 @@ class FallTemplateBot2026(ForecastBot):
         return ReasonedPrediction(prediction_value=prediction, reasoning=reasoning)
 
     def _create_resolved_question_parsing_message(self) -> str:
-        return "- If the text concludes that the question has already resolved *in the past* (i.e. it treats the question as decided rather than something to forecast), please DO NOT return a parsed output, even if a final forecast is also given. Instead indicate that the answer is not explicitly given in the text.\n"
+        # The upstream template told the parser to return nothing whenever the
+        # reasoning treated the question as already decided, "even if a final
+        # forecast is also given". That discarded valid, confident forecasts
+        # (run #8, question 46620: four of five forecasts at 93-94% were thrown
+        # away and nothing was submitted). A stated final forecast is now
+        # always parsed; only a text with no forecast at all is rejected.
+        return "- If the text gives a final forecast, parse that forecast, even when the reasoning says the deciding event has probably already happened or that the outcome looks settled. Only indicate that the answer is not explicitly given in the text if the text contains no final forecast at all (for example, it declines to forecast).\n"
 
     def _create_single_distribution_parsing_message(
         self, question: NumericQuestion | DateQuestion
